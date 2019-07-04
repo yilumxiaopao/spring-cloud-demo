@@ -4,10 +4,6 @@
 
 1 cloud-eureka
 @EnableEurekaServer
-<dependency>
-    <groupId>org.springframework.cloud</groupId>
-    <artifactId>spring-cloud-starter-netflix-eureka-server</artifactId>
-</dependency>
 
 server.port=8761
 eureka.instance.hostname=127.0.0.1
@@ -18,18 +14,14 @@ eureka.client.registerWithEureka=true
 #禁止检索服务
 eureka.client.fetchRegistry=false
 
-http://localhost:8181/ 访问地址
+http://localhost:8761/ 访问地址
 
 
 2 CLOUD-SERVICE   注册自己为cloud-service
-<dependency>
-    <g@EnableEurekaClientroupId>org.springframework.cloud</groupId>
-    <artifactId>spring-cloud-starter-netflix-eureka-client</artifactId>
-</dependency>
-
 server.port: 8085
 spring.application.name: cloud-service
 eureka.client.serviceUrl.defaultZone: http://localhost:8761/eureka/
+
 http://localhost:8085/hello
 
 
@@ -38,14 +30,7 @@ http://localhost:8085/hello
 @EnableDiscoveryClient  用于发现eureka服务
 @EnableEurekaClient   自己也是eureka的服务
 @EnableHystrix 开启熔断
-<dependency>  负载
-    <groupId>org.springframework.cloud</groupId>
-    <artifactId>spring-cloud-starter-netflix-ribbon</artifactId>
-</dependency>
-<dependency>   熔断
-    <groupId>org.springframework.cloud</groupId>
-    <artifactId>spring-cloud-starter-netflix-hystrix</artifactId>
-</dependency>
+
 localhost:8083/hello?name=test   会不断轮询机调用cloud-server
 
 restTemplate.getForObject("http://CLOUD-SERVICE/hello?name="+name, String.class)
