@@ -1,7 +1,6 @@
 # spring-cloud-demo
 简单的包含eureka service 网关 config的例子，学习记录用
 
-https://github.com/githubweili/springcloud  代码样例
 
 1 cloud-eureka
 @EnableEurekaServer
