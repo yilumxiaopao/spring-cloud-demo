@@ -1,1 +1,861 @@
+#!/bin/ksh
+
+##########################################################################
+#                                                                        #
+# Script for BATCH to start/stop                                         #
+#                                                                        #
+# start: the script will bring up a sub-batch script process to run      #
+# stop : the script will stop a sub-batch script process if running      #
+#                                                                        #
+# Author : Macle-tb.zhou@aia.com Create Date : 18/03/2015                #
+# Changed by : Macle-tb.zhou@aia.com Change Date : 18/03/2015            #
+#                                                                        #
+##########################################################################
+
+CurrentTime=`date +"%H:%M:%S"`
+CurrentProcessId="$$"
+ParentProcessId=$PPID
+
+function PRINT_SYNTAX
+{
+  echo "----------------------------------------------------------------------"
+  echo "WRONG SYNTAX"
+  echo " 1.START BATCH, \"$0 -start <country> <app> <env> <batch_name> [batch instance]\" COMMAND"
+  echo " 2.STOP BATCH, \"$0 -stop <country> <app> <env> <batch_name>\" COMMAND"
+  echo " 3.CHECK STATUS, \"$0 -status <country> <app> <env> <batch_name>\" COMMAND"
+  echo " 4.KILL HUNG BATCh, \"$0 -kill <country> <app> <env> <batch_name>\" COMMAND"
+  #echo " 3.RESTART BATCH, \"$0 -restart <country> <app> <env> <batch_name> [batch instance]\" COMMAND"
+  echo
+  echo "   <country> - only allow value mal or tkf"
+  echo "   <app> - only like nbfe"
+  echo "   <env> - list of below"
+  echo "           st - Project System testing environment"
+  echo "           sk - BAU System testing environment"
+  echo "           mo - Project System testing environment"
+  echo "           mk - BAU System testing environment"
+  echo "           pr - Production environment"
+  echo "   <batch name> - list of below:"
+  echo "                  nbupload - NBFE NBUpload Batch"
+  echo "                  lastp - NBFE Life Asia STP Batch"
+  echo "                  laepay - NBFE Life Asia case ePayment Batch"
+  echo "                  pastp - NBFE Policy Asia STP Batch"
+  echo "                  paepay - NBFE Policy Asia case ePayment Batch"
+  echo "                  paadlr - Life Asia STP Batch"
+  echo "   <batch instance> - how many batch your want to bring up, like 2 etc"
+  echo "----------------------------------------------------------------------"
+  echo
+}
+
+[ "$#" -lt 5 ] && PRINT_SYNTAX && exit 0
+#echo "INPUT :" "$#" "END"
+SHELL_NAME=$(echo `basename $0`)
+ActionCode=$1
+#echo $ActionCode
+Country=$2
+#echo $Country
+Application=$3
+#echo $Application
+Environement=$4
+#echo $Environement
+Batchname=$5
+#echo $Batchname
+BatchInstance=1
+StartInstance=1
+EndatInstance=1
+if [ $Batchname != "all" ] && [ "$#" -ge 6 ] && [ $6 -gt 0 ]; then
+  BatchInstance=$6
+  EndatInstance=$6
+  if [ "$#" -eq 8 ] && [ $7 -gt 0 ] && [ $8 -gt 0 ]; then
+    StartInstance=$7
+    EndatInstance=$8
+  fi
+fi
+
+
+BTH_ROOT_PATH=/apps/$Country/bin
+BTH_CONFIG_FILE=$BTH_ROOT_PATH/NBFE_MAL_BATCH.ini
+SYS_CURRDATE=`date +%y_%m_%d`
+BTH_LOGFILE=/apps/$Country/logs/BATCH_OP_$SYS_CURRDATE.log
+BTH_USER_ID=kappa01
+EXE_USER_ID=`whoami`
+
+if [ "$EXE_USER_ID" != "$BTH_USER_ID" ]; then
+  echo
+  echo "------------------------------------------------------------------------------------------"
+  echo -e "\033[7mINVALID\033[0m", not allow $EXE_USER_ID to run batch, only applicable for $BTH_USER_ID
+  echo "------------------------------------------------------------------------------------------"
+  echo
+  exit 0
+fi
+
+
+echo "" | tee -ai $BTH_LOGFILE
+if [ "$#" -eq 6 ] ; then
+  echo "Run with : $ActionCode $Country $Application $Environement $Batchname $6 at `date` ($CurrentTime $CurrentProcessId $ParentProcessId)" | tee -ai $BTH_LOGFILE
+elif [ "$#" -eq 8 ]; then
+  echo "Run with : $ActionCode $Country $Application $Environement $Batchname $6 $7 $8 at `date` ($CurrentTime $CurrentProcessId $ParentProcessId)" | tee -ai $BTH_LOGFILE
+else
+  echo "Run with : $ActionCode $Country $Application $Environement $Batchname at `date`  ($CurrentTime $CurrentProcessId $ParentProcessId)" | tee -ai $BTH_LOGFILE
+fi
+echo
+
+#####
+#To check the input parameter
+#$1 - Action code
+#$2 - Country
+#$3 - Application
+#$4 - Environment
+#$5 - Batch name
+#####
+function checkInput
+{
+  Action=$1
+  Country=$2
+  App=$3
+  Env=$4
+  Batch=$5
+  
+  #echo $Action $Country $App $Env $Batch
+  ####
+  #----------------------------------------------------------------------------------------
+  #Below to check Action
+  ####
+  if [ $Action = "-kill" -a $Batch == "all" ]; then
+  	echo "---------------------------------------------------------------------------"
+    echo -e "\033[7mINVALID\033[0m", not allow to kill all batch
+    echo "---------------------------------------------------------------------------"
+    echo
+    exit 0
+  fi
+
+  ####
+  #----------------------------------------------------------------------------------------
+  #Below to check Country
+  ####
+  if [ $Country != "mal" -a $Country != "tkf" ]; then
+  	echo "---------------------------------------------------------------------------"
+    echo -e "\033[7mINVALID\033[0m", not allow Country $Country, only applicable for mal or tkf
+    echo "---------------------------------------------------------------------------"
+    echo
+    exit 0
+  fi
+
+  ####
+  #----------------------------------------------------------------------------------------
+  #Below to check App
+  ####
+  if [ $App != "nbfe" ]; then
+  	echo "---------------------------------------------------------------------------"
+    echo -e "\033[7mINVALID\033[0m", not all Application $Country, only applicable for nbfe
+    echo "---------------------------------------------------------------------------"
+    echo
+    exit 0
+  fi
+
+  ####
+  #----------------------------------------------------------------------------------------
+  #Below to check Country, environment code and hostname
+  ####
+  BTH_HOSTNAME=`hostname -s`
+  #echo $BTH_HOSTNAME.aaa
+  #echo `$BTH_HOSTNAME = "MYBFDDLWEB040"`
+  if [ $BTH_HOSTNAME == "MYBFDDLWEB040" ] && [ $Env != "st" ] && [ $Env != "sk" ]; then
+    echo "---------------------------------------------------------------------------"
+    echo -e "\033[7mINVALID\033[0m", not allow to run env $Env in host $BTH_HOSTNAME
+    echo "---------------------------------------------------------------------------"
+    echo
+    exit 0
+  fi
+  if [ $BTH_HOSTNAME == "MYBFDTLWEB040" ] && [ $Env != "mo" ] && [ $Env != "mk" ]; then
+    echo "---------------------------------------------------------------------------"
+    echo -e "\033[7mINVALID\033[0m", not allow to run env $Env in host $BTH_HOSTNAME
+    echo "---------------------------------------------------------------------------"
+    echo
+    exit 0
+  fi
+  if [ $BTH_HOSTNAME == "MYBFDPLWEB04A" ] && [ $Country != "mal" ] && [ $Env != "pr" ]; then
+    echo "---------------------------------------------------------------------------"
+    echo -e "\033[7mINVALID\033[0m", not allow to run $Country/$Env in host $BTH_HOSTNAME
+    echo "---------------------------------------------------------------------------"
+    echo
+    exit 0
+  fi
+  #if [ $BTH_HOSTNAME == "MYBFDPLWEB04B" ] && [ $Country != "tkf" ] && [ $Env != "pr" ]; then
+  if [ $BTH_HOSTNAME == "MYBFDPLWEB04B" ] && [ $Env != "pr" ]; then
+    echo "---------------------------------------------------------------------------"
+    echo -e "\033[7mINVALID\033[0m", not allow to run $Country/$Env in host $BTH_HOSTNAME
+    echo "---------------------------------------------------------------------------"
+    echo
+    exit 0
+  fi
+
+  ####
+  #----------------------------------------------------------------------------------------
+  #Below to check Country, environment code and hostname
+  ####
+  #BTH_SHELL=$BTH_ROOT_PATH/$Country"_"$Application"_"$Environement"_"$Batchname.sh
+  #echo $BTH_SHELL
+  #Exit if batch shell is not exist
+  #if [  "$Batchname" != "all" ]; then
+  #  if [[ -f $BTH_SHELL ]]; then
+  #    echo echo run $BTH_SHELL >> $BTH_LOGFILE
+  #  else
+  #    echo "---------------------------------------------------------------------------"
+  #    echo -e "\033[7mINVALID\033[0m", no $Batchname batch in host $BTH_HOSTNAME
+  #    echo "---------------------------------------------------------------------------"
+  #    echo
+  #    exit 0
+  #  fi
+  #fi
+}
+
+####
+# To check whether need to run the shell, if able to run, return 1, else return 0
+#  $1 Country, like mal or tkf
+#  $2 App, the application, like nbfe
+#  $2 Env, like st or sk etc
+#  $3 BatchName, like lastp or all etc
+#  $4 ShellScript, the sub-batch shell script file name
+####
+function matchShell
+{
+#  MatchedDegree=0
+#  ShellName=$(echo `basename $ShellScript .sh` | awk -F _ '{print $1,$2,$3,$4}')
+#  echo "${ShellName[0]}" "${ShellName[1]}" "${ShellName[2]}" "${ShellName[3]}"
+#  if [ "${ShellName[0]}" = "$1" ]; then
+#    let MatchedDegree=$MatchedDegree+1
+#  fi
+#  if [ "${ShellName[1]}" = "$2" ]; then
+#    let MatchedDegree=$MatchedDegree+1
+#  fi
+#  if [ "${ShellName[2]}" = "$3" ]; then
+#    let MatchedDegree=$MatchedDegree+1
+#  fi
+#  if [ "${ShellName[3]}" = "$4" ]; then
+#    let MatchedDegree=$MatchedDegree+1
+#  fi
+#  echo "${ShellName[0]} ${ShellName[1]} ${ShellName[2]} ${ShellName[3]}"
+#  echo $MatchedDegree
+  
+#  if [ $MatchedDegree -eq 4 ]; then
+#    return 1
+#  elif [ $MatchedDegree -eq 3 ]; then
+#    if [ -f /apps/$1/bin/$1"_"$2"_"$3"_"$4.sh ]; then
+#      return 0
+#    else
+#      return 1
+#    fi
+#  else
+#    if [ -f /apps/$1/bin/$1"_"$2"_all_"$4.sh -o -f /apps/$1/bin/"all_"$2"_"$3"_"$4.sh ]; then
+#      return 0
+#    else
+#      return 1
+#    fi
+#  if
+return 1
+}
+
+####
+#  $1 Country, like mal or tkf
+#  $2 App, like nbfe etc
+#  $3 Env, like st or sk etc
+#  $4 BatchName, like lastp or all etc
+#  $5 ShellScript, the sub-batch shell script file name
+#  $6 EchoConsole, whether echo the process to console
+####
+function printProcess
+{
+  Region=$1
+  App=$2
+  Env=$3
+  BatchName=$4
+  ShellScript=$5
+  EchoConsole=$6
+  
+  #ShellScript=/apps/$Region/bin/$Region"_"$App"_"$Env"_"$BatchName".sh"
+  
+  BATCH_PROCESS=`grep BATCH_PROCESS $ShellScript | cut -d = -f2`
+  BATCH_PROCESS=`echo $BATCH_PROCESS | sed -e 's/"//g'`
+  BATCH_PROCESS=`echo $BATCH_PROCESS | sed -e "s/<country>/$Region/"`
+  BATCH_PROCESS=`echo $BATCH_PROCESS | sed -e "s/<app>/$App/"`
+  BATCH_PROCESS=`echo $BATCH_PROCESS | sed -e "s/<env>/$Env/"`
+  BATCH_PROCESS=`echo $BATCH_PROCESS | sed -e "s/<batch>/$BatchName/"`
+  #echo $BATCH_PROCESS
+  
+  #echo Region $Region
+  #echo BATCH_PROCESS $BATCH_PROCESS
+  ps -ef | egrep "$BATCH_PROCESS" | egrep "\/$Region\/" | grep -v "grep" | awk '{print $2}' > /apps/$Region/bin/print.log
+  for prs in `cat /apps/$Region/bin/print.log`
+    do
+    	#echo $prs
+    	if [ $EchoConsole -eq 0 ]; then
+        echo `ps -ef | egrep $prs | egrep "\/$Region\/" | grep -v "grep"` >> $BTH_LOGFILE
+      else
+        echo `ps -ef | egrep $prs | egrep "\/$Region\/" | grep -v "grep"` | tee -ai $BTH_LOGFILE
+      fi
+    done
+  sudo -u $BTH_USER_ID rm -rf /apps/$Region/bin/print.log
+}
+
+####
+#Input parameter
+#  $1 Action, like start or stop
+#  $1 Country, like mal or tkf
+#  $2 App, like nbfe etc
+#  $3 Env, like st or sk etc
+#  $4 BatchName, like lastp or all etc
+####
+function conflictCheck
+{
+  Action=$1
+  Country=$2
+  App=$3
+  Env=$4
+  BatchName=%5
+  echo "----before check-------------------------------------------------------------" >> $BTH_LOGFILE
+  #echo $SHELL_NAME
+  
+  RunTime=(`echo $CurrentTime | awk -F : '{print $1,$2,$3}'`)
+  r_hours=${RunTime[0]}
+  r_minutes=${RunTime[1]}
+  #echo "$r_hours:$r_minutes"
+  #PSCNT=`ps -ef | egrep $SHELL_NAME | egrep $Country | egrep $App | egrep $Env | grep -v "$r_hours:$r_minutes" | grep -v "\-status" | grep -v "grep" | wc -l`
+  if [ $ParentProcessId -gt 0 ]; then
+    PSCNT=`ps -ef | egrep $SHELL_NAME | egrep $Country | egrep $App | egrep $Env | grep -v $CurrentProcessId | grep -v $ParentProcessId | grep -v "\-status" | grep -v "grep" | wc -l`
+  else
+    PSCNT=`ps -ef | egrep $SHELL_NAME | egrep $Country | egrep $App | egrep $Env | grep -v $CurrentProcessId | grep -v "\-status" | grep -v "grep" | wc -l`
+  fi
+  if [ $PSCNT -gt 0 ]; then
+    echo "--------------------------------------------------------------------------------------------------------"
+    echo -e "\033[7mCONFLICT\033[0m", other conflict process running, will be wrong if continue
+    echo
+    
+    #ps -ef | egrep $SHELL_NAME | egrep $Country | egrep $App | egrep $Env | grep -v "$r_hours:$r_minutes" | grep -v "\-status" | grep -v "grep" | awk '{print $2, $3}' > /apps/$Country/bin/conflict.log
+    if [ $ParentProcessId -gt 0 ]; then
+      ps -ef | egrep $SHELL_NAME | egrep $Country | egrep $App | egrep $Env | grep -v $CurrentProcessId | grep -v $ParentProcessId | grep -v "\-status" | grep -v "grep" | awk '{print $2, $3}' > /apps/$Country/bin/conflict.log
+    else
+      ps -ef | egrep $SHELL_NAME | egrep $Country | egrep $App | egrep $Env | grep -v $CurrentProcessId | grep -v "\-status" | grep -v "grep" | awk '{print $2, $3}' > /apps/$Country/bin/conflict.log
+    fi
+    Loop=0
+    ProcessID=""
+    for prs in `cat /apps/$Country/bin/conflict.log`
+      do
+        if [ $Loop -eq 0 ]; then
+          ProcessID=$prs
+          Loop=1
+        else
+          #ProcessID=$ProcessID $prs
+          #echo $ProcessID
+          echo `ps -ef | egrep $ProcessID | egrep $prs | grep -v "grep"` | tee -ai $BTH_LOGFILE
+          Loop=0
+        fi
+        #echo $prs
+        #echo `ps -ef | egrep "$prs" | grep -v "grep"` | tee -ai $BTH_LOGFILE
+      done
+    sudo -u $BTH_USER_ID rm -rf /apps/$Country/bin/conflict.log
+    echo
+    echo "Exit here"
+    echo "--------------------------------------------------------------------------------------------------------"
+    exit 0
+  fi
+  echo "----End check-------------------------------------------------------------" >> $BTH_LOGFILE
+}
+
+####
+#Input parameter
+#  $1 Country, like mal or tkf
+#  $2 App, like nbfe etc
+#  $3 Env, like st or sk etc
+#  $4 BatchName, like lastp or all etc
+#  $5 InstanceQty, any int value which great than 0, to define how many batch instance want to bring up
+#  $6 StartInstance, the first instance number to start up
+#  $7 EndatInstance, the last instance sequence to start up
+#  $8 TaskNumber, the particular task number for batch to run
+####
+function startBatch
+{
+  echo "----before start-------------------------------------------------------------" >> $BTH_LOGFILE
+  echo
+  
+  Region=$1
+  App=$2
+  Env=$3
+  BatchName=$4
+  InstanceQty=$5
+  StartInstance=$6
+  EndatInstance=$7
+  #TaskNumber=$8
+  
+  #echo $Region $App $Env $BatchName $InstanceQty
+  
+  ShellList=/apps/$Region/bin/"*_"$App"_*_"$BatchName".sh"
+  if [ $BatchName = "all" ]; then
+    ShellList=/apps/$Region/bin/"*_"$App"_*_*.sh"
+  fi
+  
+  #echo
+  #echo $ShellList
+  
+  TotaBatchFile=0
+  TtlSuccessBatchs=0
+  for ShellScript in `ls $ShellList`
+    do
+      #echo $ShellScript
+      BatchName=$(echo `basename $ShellScript .sh` | awk -F _ '{print $4}')
+      #echo $BatchName
+      is_pa=`expr match "$BatchName" 'pa'`
+      if [ $Region = "tkf" -a $is_pa -gt 0 ]; then
+        continue
+      fi
+      matchShell $Region $App $Env $BatchName $ShellScript
+      MatchedResult=$?
+      #echo MatchedResult : $MatchedResult
+      #** Skip if not match shell
+      if [ $MatchedResult -eq 0 ]; then
+        continue
+      fi
+			
+			echo  | tee -ai $BTH_LOGFILE
+      let TotaBatchFile=$TotaBatchFile+1
+      echo Before start : $ShellScript at `date` >> $BTH_LOGFILE
+      BATCH_DESC=`grep BATCH_DESC $ShellScript | cut -d = -f2`
+      BATCH_PROCESS=`grep BATCH_PROCESS $ShellScript | cut -d = -f2`
+      BATCH_PROCESS=`echo $BATCH_PROCESS | sed -e 's/"//g'`
+      BATCH_PROCESS=`echo $BATCH_PROCESS | sed -e "s/<country>/$Region/"`
+      BATCH_PROCESS=`echo $BATCH_PROCESS | sed -e "s/<app>/$App/"`
+      BATCH_PROCESS=`echo $BATCH_PROCESS | sed -e "s/<env>/$Env/"`
+      BATCH_PROCESS=`echo $BATCH_PROCESS | sed -e "s/<batch>/$BatchName/"`
+      #echo $BATCH_PROCESS
+      MAX_BTH_INSTRANCE=`grep MAX_BTH_INSTRANCE $ShellScript | cut -d = -f2`
+      echo "BATCH_PROCESS:$BATCH_PROCESS" >> $BTH_LOGFILE
+      echo "MAX_BTH_INSTRANCE:$MAX_BTH_INSTRANCE"  >> $BTH_LOGFILE
+      if [ $MAX_BTH_INSTRANCE -gt $InstanceQty ]; then
+        MAX_BTH_INSTRANCE=$InstanceQty
+      fi
+      if [ $StartInstance -lt 1 ]; then
+        $StartInstance=1
+      fi
+      if [ $EndatInstance -gt $MAX_BTH_INSTRANCE ]; then
+        $EndatInstance=$MAX_BTH_INSTRANCE
+      fi
+
+      PSCNT=`ps -ef | egrep "$BATCH_PROCESS" | egrep "\/$Region\/" | grep -v "grep" | wc -l`
+      echo "PSCNT RESULT: $PSCNT" >> $BTH_LOGFILE
+      if [ $PSCNT -eq 0 ]; then
+        #Batch is not running, to up batch
+        #for i in {1..$MAX_BTH_INSTRANCE}
+        #echo "StartInstance-" $StartInstance
+        #echo "EndatInstance-" $EndatInstance
+        for i in $(seq $StartInstance $EndatInstance)
+          do
+            echo "before start batch $ShellScript " $i $MAX_BTH_INSTRANCE >> $BTH_LOGFILE
+            if [ $MAX_BTH_INSTRANCE -gt 1 ]; then
+              sudo -u $BTH_USER_ID /usr/bin/nohup $ShellScript $Region $App $Env $BatchName $i $MAX_BTH_INSTRANCE > /dev/null 2>&1 &
+            else
+              sudo -u $BTH_USER_ID /usr/bin/nohup $ShellScript $Region $App $Env $BatchName > /dev/null 2>&1 &
+            fi
+            echo "after start batch $ShellScript " $i $MAX_BTH_INSTRANCE >> $BTH_LOGFILE
+            sleep 1
+          done
+      
+        #To check whether up successful
+        PSCNT=`ps -ef | egrep "$BATCH_PROCESS" | egrep "\/$Region\/" | grep -v "grep" | wc -l`
+        #echo 
+        if [ $PSCNT -gt 0 ]; then
+          #Up
+          TotalUpInstance=1
+          if [ $EndatInstance -gt $StartInstance ]; then
+            let TotalUpInstance=$EndatInstance-$StartInstance+1
+          fi
+          #echo "TotalInstance to up:" $TotalUpInstance
+          if [ $PSCNT -eq $TotalUpInstance ]; then
+            #Up Success
+            let TtlSuccessBatchs=$TtlSuccessBatchs+1
+            echo -e "\033[1mSUCCESS\033[0m", started $BATCH_DESC"($BatchName)" batch, $PSCNT instance up | tee -ai $BTH_LOGFILE
+          else
+            #Up, but less than total instance qty
+            let NotUpInstance=$TotalUpInstance-$PSCNT
+            #echo -e "\033[7mFAILED\033[0m", `expr $TotalUpInstance-$PSCNT` instance not up, please stop/start | tee -ai $BTH_LOGFILE
+            echo -e "\033[7mFAILED\033[0m", $NotUpInstance instance not up, please stop/start | tee -ai $BTH_LOGFILE
+          fi
+          printProcess $Region $App $Env $BatchName $ShellScript 0
+        else
+          #Not up any instance
+          echo -e "\033[7mFAILED\033[0m", not able to start $BATCH_DESC"($BatchName)" batch, please retry start | tee -ai $BTH_LOGFILE
+        fi
+      else
+        #Batch is already running
+        echo -e "\033[7mWARNING\033[0m", $PSCNT of $BATCH_DESC"($BatchName)" batch is running, please stop is required | tee -ai $BTH_LOGFILE
+        printProcess $Region $App $Env $BatchName $ShellScript 0
+      fi
+      #if [ $PSCNT -eq 0 ]; then
+      echo After start : $ShellScript  at `date` >> $BTH_LOGFILE      
+    done
+
+  #below for start all batchs
+  if [ $TotaBatchFile -gt 1 ]; then
+    echo
+    echo "---------------------------------------------------------" | tee -ai $BTH_LOGFILE
+    if [ $TotaBatchFile -eq $TtlSuccessBatchs ]; then
+      #All batch successful
+      echo -e ALL BATCHS START "\033[1mSUCCESS\033[0m" | tee -ai $BTH_LOGFILE
+    else
+      #partically successful
+      let FailedQty=$TotaBatchFile-$TtlSuccessBatchs
+      echo -e $TtlSuccessBatchs BATCHS START "\033[1mSUCCESS\033[0m", BUT $FailedQty "\033[7mFAILED\033[0m", PLEASE "\033[1mRETRY\033[0m" | tee -ai $BTH_LOGFILE
+    fi
+    echo "---------------------------------------------------------" | tee -ai $BTH_LOGFILE
+  fi
+  echo "----after start-------------------------------------------------------------" >> $BTH_LOGFILE
+}
+
+####
+#Input parameter
+#  $1 Country, like mal or tkf
+#  $2 App, like nbfe etc
+#  $3 Env, like st or sk etc
+#  $4 BatchName, like lastp or all etc
+####
+function stopBatch
+{
+  #StartTime=`date +"%Y-%m-%d %H:%M:%S"`
+  StartTime=`date +"%H:%M:%S"`
+  
+  echo "----before stop--------------------------------------------" >> $BTH_LOGFILE
+  
+  Region=$1
+  App=$2
+  Env=$3
+  BatchName=$4
+  #echo $Region $App $Env $BatchName
+  
+  ShellList=/apps/$Region/bin/"*_"$App"_*_"$BatchName".sh"
+  if [ $BatchName = "all" ]; then
+    ShellList=/apps/$Region/bin/"*_"$App"_*_*.sh"
+  fi
+  echo stopBatch > /apps/$Region/bin/stoptmp.log
+  #echo
+  #echo $ShellList
+  #echo
+
+  TotaBatchFile=0
+  LoopTimes=0
+
+  #Loop till all batchs stopped
+  while true
+    do
+      RunningBatchs=0
+      for ShellScript in `ls $ShellList`
+        do
+          echo STOP BATCH $ShellScript at `date` >> $BTH_LOGFILE
+          BatchName=$(echo `basename $ShellScript .sh` | awk -F _ '{print $4}')
+          #echo $BatchName
+          is_pa=`expr match "$BatchName" 'pa'`
+          if [ $Region = "tkf" -a $is_pa -gt 0 ]; then
+            continue
+          fi
+          
+          matchShell $Region $App $Env $BatchName $ShellScript
+          MatchedResult=$?
+          #echo MatchedResult : $MatchedResult
+          #** Skip if not match shell
+          if [ $MatchedResult -eq 0 ]; then
+            continue
+          fi
+          
+          echo  | tee -ai $BTH_LOGFILE
+          if [ $LoopTimes -eq 0 ]; then
+            let TotaBatchFile=$TotaBatchFile+1
+          fi
+          
+          #Get the BATCH_PROCESS  from batch shell script file
+          BATCH_DESC=`grep BATCH_DESC $ShellScript | cut -d = -f2`
+          BATCH_PROCESS=`grep BATCH_PROCESS $ShellScript | cut -d = -f2`
+          BATCH_PROCESS=`echo $BATCH_PROCESS | sed -e 's/"//g'`
+          BATCH_PROCESS=`echo $BATCH_PROCESS | sed -e "s/<country>/$Region/"`
+          BATCH_PROCESS=`echo $BATCH_PROCESS | sed -e "s/<app>/$App/"`
+          BATCH_PROCESS=`echo $BATCH_PROCESS | sed -e "s/<env>/$Env/"`
+          BATCH_PROCESS=`echo $BATCH_PROCESS | sed -e "s/<batch>/$BatchName/"`
+          #echo $BATCH_PROCESS
+          echo "BATCH_PROCESS:$BATCH_PROCESS" >> $BTH_LOGFILE
+          
+          PSCNT=`ps -ef | egrep "$BATCH_PROCESS" | egrep "\/$Region\/" | grep -v "grep" | wc -l`
+          
+          if [ $PSCNT -gt 0 ]; then
+            #Batch still running
+            let RunningBatchs=$RunningBatchs+1
+            echo "Total $PSCNT of $BATCH_PROCESS are running" >> $BTH_LOGFILE
+            printProcess $Region $App $Env $BatchName $ShellScript 0
+            echo -e "\033[5mWAITING...\033[0m", $PSCNT of $BATCH_DESC"($BatchName)" batch is running ... | tee -ai $BTH_LOGFILE
+          else
+            #Batch stopped, to check whether need to print below
+          
+            Printed=0
+            for prs in `cat /apps/$Region/bin/stoptmp.log`
+              do
+                #echo prs $prs $BatchName
+    	          if [ "$prs" = "$BatchName" ]; then
+    	            Printed=1
+    	          fi
+              done
+            #echo Printed $Printed
+            if [ $Printed -eq 0 ]; then
+              echo $BatchName >> /apps/$Region/bin/stoptmp.log
+              if [ $LoopTimes -eq 0 ]; then
+                echo -e "\033[7mWARNING\033[0m", $BATCH_DESC"($BatchName)" batch is not running  ... | tee -ai $BTH_LOGFILE
+              else
+                echo -e "\033[1mSUCCESS\033[0m", stopped $BATCH_DESC"($BatchName)" batch  ... | tee -ai $BTH_LOGFILE
+              fi
+            fi
+          fi
+          sleep 5
+        done
+        #End of for loop here, back in while loop
+      #echo RunningBatchs $RunningBatchs
+      let LoopTimes=$LoopTimes+1
+      if [ $RunningBatchs -eq 0 ]; then
+        #End of while loop
+        #echo "end while"
+        break
+      fi
+      sleep 1
+    done
+  #End of while loop here
+    
+  #below for time calculation
+  EndTime=`date +"%H:%M:%S"`
+  
+  StartTime=(`echo $StartTime | awk -F : '{print $1,$2,$3}'`)
+  s_hours=${StartTime[0]}
+  s_minutes=${StartTime[1]}
+  s_seconds=${StartTime[2]}
+
+  EndTime=(`echo $EndTime | awk -F : '{print $1,$2,$3}'`)
+  e_hours=${EndTime[0]}
+  e_minutes=${EndTime[1]}
+  e_seconds=${EndTime[2]}
+  
+  elapsedSeconds=0
+  let elapsedSeconds=e_hours*3600
+  let elapsedSeconds=elapsedSeconds-s_hours*3600
+  let elapsedSeconds=elapsedSeconds+e_minutes*60
+  let elapsedSeconds=elapsedSeconds-s_minutes*60
+  let elapsedSeconds=elapsedSeconds+e_seconds
+  let elapsedSeconds=elapsedSeconds-s_seconds
+  
+  echo "----before stop--------------------------------------------------" $StartTime >> $BTH_LOGFILE
+  #if [ $TotaBatchFile -gt 1 ]; then
+    echo
+    echo "---------------------------------------------------------" | tee -ai $BTH_LOGFILE
+    echo -e "\033[1mSUCCESS\033[0m" STOPPED, TOTAL ELAPSED $elapsedSeconds s  | tee -ai $BTH_LOGFILE
+    echo "---------------------------------------------------------" | tee -ai $BTH_LOGFILE
+  #fi
+  sudo -u $BTH_USER_ID rm -rf /apps/$Region/bin/stoptmp.log
+  echo "----after stop------------------------------------------------------------" >> $BTH_LOGFILE
+}
+
+####
+#Input parameter
+#  $1 Country, like mal or tkf
+#  $2 App, like nbfe etc
+#  $3 Env, like st or sk etc
+#  $4 BatchName, like lastp or all etc
+####
+function statusCheck
+{
+  echo "----before status check-------------------------------------------------------------" >> $BTH_LOGFILE
+  echo
+  
+  Region=$1
+  App=$2
+  Env=$3
+  BatchName=$4
+  
+  #echo $Region $App $Env $BatchName
+  
+  ShellList=/apps/$Region/bin/"*_"$App"_*_"$BatchName".sh"
+  if [ $BatchName = "all" ]; then
+    ShellList=/apps/$Region/bin/"*_"$App"_*_*.sh"
+  fi
+  
+  #echo
+  #echo $ShellList
+  
+  for ShellScript in `ls $ShellList`
+    do
+      #echo $ShellScript
+      BatchName=$(echo `basename $ShellScript .sh` | awk -F _ '{print $4}')
+      #echo $BatchName
+      
+      is_pa=`expr match "$BatchName" 'pa'`
+      #echo Region $Region
+      #echo is_pa $is_pa
+      if [ $Region = "tkf" -a $is_pa -gt 0 ]; then
+        continue
+      fi
+
+      matchShell $Region $App $Env $BatchName $ShellScript
+      MatchedResult=$?
+      #echo MatchedResult : $MatchedResult
+      #** Skip if not match shell
+      if [ $MatchedResult -eq 0 ]; then
+        continue
+      fi
+      echo  | tee -ai $BTH_LOGFILE
+      echo Before start : $ShellScript at `date` >> $BTH_LOGFILE
+      BATCH_DESC=`grep BATCH_DESC $ShellScript | cut -d = -f2`
+      BATCH_PROCESS=`grep BATCH_PROCESS $ShellScript | cut -d = -f2`
+      BATCH_PROCESS=`echo $BATCH_PROCESS | sed -e 's/"//g'`
+      BATCH_PROCESS=`echo $BATCH_PROCESS | sed -e "s/<country>/$Region/"`
+      BATCH_PROCESS=`echo $BATCH_PROCESS | sed -e "s/<app>/$App/"`
+      BATCH_PROCESS=`echo $BATCH_PROCESS | sed -e "s/<env>/$Env/"`
+      BATCH_PROCESS=`echo $BATCH_PROCESS | sed -e "s/<batch>/$BatchName/"`
+      #echo $BATCH_PROCESS
+      echo "BATCH_PROCESS:$BATCH_PROCESS" >> $BTH_LOGFILE
+      
+      PSCNT=`ps -ef | egrep "$BATCH_PROCESS" | egrep "\/$Region\/" | grep -v "grep" | wc -l`
+      echo "PSCNT RESULT: $PSCNT" >> $BTH_LOGFILE
+      if [ $PSCNT -gt 0 ]; then
+        #batch is running
+        echo -e "\033[1mRUNNING\033[0m", $PSCNT of $BATCH_DESC"($BatchName)" batch running with below process | tee -ai $BTH_LOGFILE
+        echo "..........................................................................."
+        printProcess $Region $App $Env $BatchName $ShellScript 1
+      else
+        #Batch is not running
+        echo -e "\033[1mSTOPED\033[0m", $BATCH_DESC"($BatchName)" batch is not running | tee -ai $BTH_LOGFILE
+      fi
+      echo After start : $ShellScript  at `date` >> $BTH_LOGFILE
+    done
+  echo
+  echo "-----------------------------------------------------"
+  echo "STATUS check finished"
+  echo "-----------------------------------------------------"
+  echo "----after status check-------------------------------------------------------------" >> $BTH_LOGFILE
+}
+
+####
+#Input parameter
+#  $1 Country, like mal or tkf
+#  $2 App, like nbfe etc
+#  $3 Env, like st or sk etc
+#  $4 BatchName, like lastp or all etc
+####
+function killBatch
+{
+  echo "----before kill batch-------------------------------------------------------------" >> $BTH_LOGFILE
+  echo
+  
+  Region=$1
+  App=$2
+  Env=$3
+  BatchName=$4
+  
+  #echo $Region $App $Env $BatchName
+  
+  ShellList=/apps/$Region/bin/"*_"$App"_*_"$BatchName".sh"
+  if [ $BatchName = "all" ]; then
+    ShellList=/apps/$Region/bin/"*_"$App"_*_*.sh"
+  fi
+  
+  #echo
+  #echo $ShellList
+  
+  for ShellScript in `ls $ShellList`
+    do
+      #echo $ShellScript
+      BatchName=$(echo `basename $ShellScript .sh` | awk -F _ '{print $4}')
+      #echo $BatchName
+      is_pa=`expr match "$BatchName" 'pa'`
+      if [ $Region = "tkf" -a $is_pa -gt 0 ]; then
+        continue
+      fi      
+      matchShell $Region $App $Env $BatchName $ShellScript
+      MatchedResult=$?
+      #echo MatchedResult : $MatchedResult
+      #** Skip if not match shell
+      if [ $MatchedResult -eq 0 ]; then
+        continue
+      fi
+      
+      echo  | tee -ai $BTH_LOGFILE
+      echo Before start : $ShellScript at `date` >> $BTH_LOGFILE
+      BATCH_DESC=`grep BATCH_DESC $ShellScript | cut -d = -f2`
+      BATCH_PROCESS=`grep BATCH_PROCESS $ShellScript | cut -d = -f2`
+      BATCH_PROCESS=`echo $BATCH_PROCESS | sed -e 's/"//g'`
+      BATCH_PROCESS=`echo $BATCH_PROCESS | sed -e "s/<country>/$Region/"`
+      BATCH_PROCESS=`echo $BATCH_PROCESS | sed -e "s/<app>/$App/"`
+      BATCH_PROCESS=`echo $BATCH_PROCESS | sed -e "s/<env>/$Env/"`
+      BATCH_PROCESS=`echo $BATCH_PROCESS | sed -e "s/<batch>/$BatchName/"`
+      #echo $BATCH_PROCESS
+      echo "BATCH_PROCESS:$BATCH_PROCESS" >> $BTH_LOGFILE
+      
+      PSCNT=`ps -ef | egrep "$BATCH_PROCESS" | egrep "\/$Region\/" | grep -v "grep" | wc -l`
+      echo "PSCNT RESULT: $PSCNT" >> $BTH_LOGFILE
+      if [ $PSCNT -gt 0 ]; then
+        #batch is running, will kill the process
+        ps -ef | egrep "$BATCH_PROCESS" | egrep "\/$Region\/" | grep -v "grep" | awk '{print $2}' > /apps/$Region/bin/killbatch.log
+        for prs in `cat /apps/$Region/bin/killbatch.log`
+          do
+    	      #echo $prs
+    	      echo `ps -ef | egrep $prs | egrep "\/$Region\/" | grep -v "grep"` >> $BTH_LOGFILE
+    	      #echo before kill $prs
+    	      sudo -u $BTH_USER_ID kill -9 $prs
+    	      #echo after kill $prs 
+          done
+        #sudo -u $BTH_USER_ID rm -rf /apps/$Region/bin/killbatch.log
+        PSCNT=`ps -ef | egrep "$BATCH_PROCESS" | egrep "\/$Region\/" | grep -v "grep" | wc -l`
+        if [ $PSCNT -eq 0 ]; then
+          echo -e "\033[1mSUCCESS\033[0m" $BATCH_DESC"($BatchName)" batch was killed | tee -ai $BTH_LOGFILE
+        else
+          echo -e "\033[7mFAILED\033[0m", $BATCH_DESC"($BatchName)" batch not able to be killed | tee -ai $BTH_LOGFILE
+        fi
+      else
+        #Batch is not running
+        echo -e "\033[7mWARNING\033[0m", $BATCH_DESC"($BatchName)" batch is not running | tee -ai $BTH_LOGFILE
+      fi
+      echo After start : $ShellScript  at `date` >> $BTH_LOGFILE
+    done
+  echo
+  echo "-----------------------------------------------------"
+  echo "KILL batch finished"
+  echo "-----------------------------------------------------"
+  echo "----after status check-------------------------------------------------------------" >> $BTH_LOGFILE
+}
+
+###-------------------------------------------------------------------------------------------------
+###Main logic start from here
+###-------------------------------------------------------------------------------------------------
+
+
+#echo $Batchinstance
+
+umask 0002
+
+checkInput $ActionCode $Country $Application $Environement $Batchname
+
+echo "Remove old log files '-mtime +93'" >> $BTH_LOGFILE
+find /apps/$Country/logs/ -type f -mtime +93 -exec rm -f {} \;
+
+
+if [ "$ActionCode" == "-start" ]; then
+  conflictCheck $ActionCode $Country $Application $Environement $Batchname
+  startBatch $Country $Application $Environement $Batchname $BatchInstance $StartInstance $EndatInstance
+elif [ "$ActionCode" == "-stop" ]; then
+  conflictCheck $ActionCode $Country $Application $Environement $Batchname
+  stopBatch $Country $Application $Environement $Batchname
+elif [ "$ActionCode" == "-restart" ]; then
+  echo not able to restart at this moment
+  PRINT_SYNTAX
+  #stopBatch $Country $Application $Environement $Batchname
+  #startBatch $Country $Application $Environement $Batchname $BatchInstance
+elif [ "$ActionCode" == "-status" ]; then
+  statusCheck $Country $Application $Environement $Batchname
+elif [ "$ActionCode" == "-kill" ]; then
+  killBatch $Country $Application $Environement $Batchname
+else
+  PRINT_SYNTAX
+fi
+
+echo "END System Operator Main Menu at `date`" >> $BTH_LOGFILE
+echo "" | tee -ai $BTH_LOGFILE
 
