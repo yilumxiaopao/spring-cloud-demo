@@ -1,0 +1,193 @@
+#/apps/mal/bin
+##########################################################################
+# Naming standard : <region>_nbfe_<env>_<batch>.sh                       #
+#   <region> - mal or tkf, or all for both mal and tkf                   #
+#   <env> - st, sk, mo, mk and pr, or 'all' for all                      #
+#   <batch> - nbupload,lastp,laepay,paepay,paadlr,pastp,labstp,pabstp,   #
+#             larebilling,parebilling                                    #
+# Exmaple :                                                              #
+#   all_nbfe_all_nbupload.sh - NBUpload batch scprit for mal/tkf all env #
+#   all_nbfe_sk_nbupload.sh - NBUpload batch scprit for mal/tkf sk only  #
+#   mal_nbfe_all_nbupload.sh - NBUpload batch scprit for mal all env     #
+#   mal_nbfe_sk_nbupload.sh - NBUpload batch scprit for mal sk only      #
+#                                                                        #
+# Script for NBFE Batch Process                                          #
+#                                                                        #
+# Written by : Phoenix Xu                                                #
+# Date : 12/13/2017                                                      #
+# Updated by :                                                           #
+#                                                                        #
+#                                                                        #
+##########################################################################
+
+##-------------------------------------------------------------------------------------------------
+## Change start from here
+##-------------------------------------------------------------------------------------------------
+MAX_BTH_INSTRANCE=1
+BATCH_DESC="Auto Rebilling Batch"
+##-------------------------------------------------------------------------------------------------
+## Change end by here
+##-------------------------------------------------------------------------------------------------
+
+WAS=/opt/IBM/WAS90
+JDK=$WAS/AppServer/java/8.0
+JAVA=$JDK/bin/java
+EXE_USER=`whoami`
+BTH_USER=kappa01
+BTH_HOSTNAME=`hostname -s`
+BATCH_PROCESS="BatchMainStarter <country> <app> <env> <batch>"
+
+CurrentDate=`date +%y_%m_%d`
+#BatchName=$(echo `basename $0 .sh` | awk -F _ '{print $4}')
+##-------------------------------------------------------------------------------------------------
+## Input parameter for JavaProcess as below:
+##   $1 - Country, value will be mal or tkf
+##   $2 - app, the application code, like nbfe
+##   $3 - env, the environment code, like st or sk etc
+##   $4 - batch name, like paadlr for POLA ADLR batch, will have a properties file named paadlr.properties exist
+##   $5 - batch seq, the sequence of the batch, for multiple batch usage, can be empty
+##   $6 - total batch instance, for multiple batch instance usage, to pass in the total instance quantity
+##   $7 - task number, special usage for batch to only execute the particular task, for format 
+##        must able to be understood by Java program
+##-------------------------------------------------------------------------------------------------
+[ "$#" -lt 4 ] && echo wrong input parameter in $0 && exit 0
+JavaProcess="ho.aia.nb.batchframework.BatchMainStarter $1 $2 $3 $4"
+if [ "$#" -eq 5 ]; then
+	# Run with a particular task number
+  JavaProcess="ho.aia.nb.batchframework.BatchMainStarter $1 $2 $3 $4 $5"
+elif [ "$#" -eq 6 ]; then
+  # Run with multiple instance
+  JavaProcess="ho.aia.nb.batchframework.BatchMainStarter $1 $2 $3 $4 $5 $6"
+fi
+#echo $JavaProcess
+
+Country=$1
+App=$2
+Env=$3
+Batch=$4
+
+RootPath=/apps/$Country
+
+##-----Application: use to define the application folder, like to look up the properties
+Application=CommonNBCFE
+is_la=`expr match "$Batch" 'la'`
+if [ "$Batch" = "nbupload" -o $is_la -gt 0 ]; then
+  Application=CommonNBCFE_LA
+else
+  Application=CommonNBCFE_PA
+fi
+
+if [ "$Env" = "sk"  ]; then
+  Application=$Application"_SK"
+elif [ "$Env" = "st"  ]; then
+  Application=$Application"_ST"
+elif [ "$Env" = "mo"  ]; then
+  Application=$Application"_MO"
+elif [ "$Env" = "mk"  ]; then
+  Application=$Application"_MK"
+fi
+
+##-----WASWebApp: use to define the app Web module name in WAS
+WASWebApp=$Application
+if [ "$Env" = "pr" ]; then
+  if [ "$BTH_HOSTNAME" = "MYBFDPLWEB04A" ]; then
+    WASWebApp=$Application"_C11"
+  else
+    WASWebApp=$Application"_C21"
+  fi
+fi
+
+##-----WASWebRoot
+WASWebRoot=$RootPath/WAS90/MALAppSrv/installedApps/$BTH_HOSTNAME"Node01Cell"
+if [ $Country = "tkf" ]; then
+  WASWebRoot=$RootPath/WAS90/TKFAppSrv/installedApps/$BTH_HOSTNAME"Node02Cell"
+##  if [ "$BTH_HOSTNAME" = "MYBFDTLWEB040" ]; then
+##    WASWebRoot=$RootPath/WAS90/TKFAppSrv/installedApps/$BTH_HOSTNAME"Node02Cell"
+##  else
+##    WASWebRoot=$RootPath/WAS90/TKFAppSrv/installedApps/$BTH_HOSTNAME"Node03Cell"
+##  fi
+fi
+
+JVMErrLogFile=$RootPath/logs/$Application/$Batch/"JVMErr_"$CurrentDate"_1.log"
+LogFile=$RootPath/logs/$Application/$Batch/$Batch"_"$CurrentDate"_1.log"
+if [ "$#" -eq 6 ]; then
+  LogFile=$RootPath/logs/$Application/$Batch/$Batch"_"$CurrentDate"_"$5.log
+fi
+
+if [ "$EXE_USER" != "$BTH_USER" ]; then
+  echo "Invalid user $EXE_USER to run, exit here" >> $LogFile
+  exit 0
+fi
+
+MQLibPath=$WAS/AppServer/installedConnectors/wmq.jmsra.rar
+CommonLibPath=$RootPath/Common/lib
+
+Classpath=$RootPath/$Application/properties/batchs
+Classpath=$Classpath:$RootPath/$Application/properties
+Classpath=$Classpath:$RootPath/Common/properties
+Classpath=$Classpath:$RootPath/CommonLogon/properties
+Classpath=$Classpath:$RootPath/CommonUtility_Client/properties
+
+Classpath=$Classpath:$WASWebRoot/$WASWebApp.ear/CommonNBCFE_WEB.war/WEB-INF/classes
+#Classpath=$Classpath:$MQLibPath/com.ibm.mq.jar
+#Classpath=$Classpath:$MQLibPath/com.ibm.mqjms.jar
+#Classpath=$Classpath:$MQLibPath/com.ibm.mq.pcf.jar
+#Classpath=$Classpath:$MQLibPath/com.ibm.mq.jmqi.jar
+#Classpath=$Classpath:$MQLibPath/com.ibm.mq.headers.jar
+#Classpath=$Classpath:$MQLibPath/com.ibm.mq.connector.jar
+#Classpath=$Classpath:$MQLibPath/bcpkix-jdk15on-157.jar
+#Classpath=$Classpath:$MQLibPath/bcprov-jdk15on-157.jar
+Classpath=$Classpath:$CommonLibPath/wmq.jmsra.rar/com.ibm.mq.jar
+Classpath=$Classpath:$CommonLibPath/wmq.jmsra.rar/com.ibm.mqjms.jar
+Classpath=$Classpath:$CommonLibPath/wmq.jmsra.rar/com.ibm.mq.pcf.jar
+Classpath=$Classpath:$CommonLibPath/wmq.jmsra.rar/com.ibm.mq.commonservices.jar
+Classpath=$Classpath:$CommonLibPath/wmq.jmsra.rar/com.ibm.mq.jmqi.jar
+Classpath=$Classpath:$CommonLibPath/wmq.jmsra.rar/com.ibm.mq.jmqi.remote.jar
+Classpath=$Classpath:$CommonLibPath/wmq.jmsra.rar/com.ibm.mq.jmqi.system.jar
+Classpath=$Classpath:$CommonLibPath/wmq.jmsra.rar/com.ibm.mq.headers.jar
+
+Classpath=$Classpath:$CommonLibPath/gson-2.8.5.jar
+Classpath=$Classpath:$CommonLibPath/fastjson-1.2.7.jar
+Classpath=$Classpath:$CommonLibPath/Common.jar
+#Classpath=$Classpath:$CommonLibPath/CommonUtility_Client.jar
+Classpath=$Classpath:$RootPath/$Application/properties/batchs/CommonUtility_Client.jar
+Classpath=$Classpath:$CommonLibPath/CommonLogon.jar
+Classpath=$Classpath:$CommonLibPath/bnf.jar
+Classpath=$Classpath:$CommonLibPath/jconn3.jar
+Classpath=$Classpath:$CommonLibPath/XMLParser.jar
+Classpath=$Classpath:$CommonLibPath/Tcl.jar
+Classpath=$Classpath:$CommonLibPath/jaxp.jar
+Classpath=$Classpath:$CommonLibPath/json.jar
+Classpath=$Classpath:$CommonLibPath/j2ee.jar
+Classpath=$Classpath:$CommonLibPath/jt400.jar
+Classpath=$Classpath:$CommonLibPath/log4j-1.2.8.jar
+Classpath=$Classpath:$CommonLibPath/Ingenium.jar
+Classpath=$Classpath:$CommonLibPath/PathFinder.jar
+Classpath=$Classpath:$CommonLibPath/axis.jar
+Classpath=$Classpath:$CommonLibPath/commons-discovery-0.2.jar
+Classpath=$Classpath:$CommonLibPath/javax.wsdl_1.5.1.v200806030408.jar
+Classpath=$Classpath:$CommonLibPath/jaxrpc.jar
+Classpath=$Classpath:$CommonLibPath/commons-logging.jar
+Classpath=$Classpath:$CommonLibPath/ojdbc6.jar
+Classpath=$Classpath:$CommonLibPath/sqljdbc4.jar
+Classpath=$Classpath:$CommonLibPath/commons-collections-3.2.1.jar
+Classpath=$Classpath:$CommonLibPath/commons-dbcp-1.4.jar
+
+Classpath=$Classpath:$CommonLibPath/jaxb-api-2.2.6.jar
+Classpath=$Classpath:$CommonLibPath/jaxb-impl-2.2.5-5.jar
+Classpath=$Classpath:$CommonLibPath/stax-api.jar
+
+Classpath=$Classpath:$JDK/jre/lib/rt.jar
+
+echo
+echo "--CLASSPATH start-----------------------------------------------------------------------------------"
+echo $Classpath >> $LogFile
+echo "--CLASSPATH finish-----------------------------------------------------------------------------------"
+echo
+
+echo Start $JavaProcess at `date` >> $LogFile
+echo
+
+$JAVA -ms512m -mx512m -classpath $Classpath -DuseSelfPool=true -XX:ErrorFile=$JVMErrLogFile $JavaProcess >>$LogFile 2>>$LogFile
+
+echo Finish start $JavaProcess at `date` >> $LogFile
